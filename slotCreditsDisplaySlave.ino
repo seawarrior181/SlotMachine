@@ -58,7 +58,6 @@
   ===========
   - Includes                                                                    */
 #include <Wire.h>
-//We always have to include the library
 #include "LedControl.h"
 
 #define BAUD_RATE           38400                                               
@@ -177,7 +176,7 @@ void loop() {
 }
 
 void updateDisplay() {
-  debug("updateDisplay()");
+  //debug("updateDisplay()");
 
   for ( signed long displayBalance = startingCreditBalance; 
         displayBalance != endingCreditBalance; 
@@ -239,7 +238,7 @@ void showBalance(signed long showBalance) {                                     
                                                                                   // This function executes whenever data is received from The 
                                                                                   // master.  The function is registered as an event (see setup()). 
 void receiveEvent(int howMany) {
-  debug("receiveEvent()");
+  //debug("receiveEvent()");
   int i = 0;
   while (1 <= Wire.available()) { // loop through all
     theCredits[i] = Wire.read();
@@ -265,7 +264,7 @@ void receiveEvent(int howMany) {
 }
 
 void scrollDigits() {
-  debug("scrollDigits()");
+  //debug("scrollDigits()");
   for(int i=0;i<13;i++) {
     lc.setDigit(0,7,i,false);
     lc.setDigit(0,6,i+1,false);
