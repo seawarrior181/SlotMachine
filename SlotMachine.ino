@@ -1,7 +1,7 @@
 /*SlotMachine.ino
 
   Version:   1.0
-  Date:      2018/07/01 - 2018/07/29
+  Date:      2018/07/01 - 2018/08/29
   Device:    ATMega328P-PU @ 16mHz
   Language:  C
 
@@ -22,37 +22,22 @@
   
   Known Defects
   =============  
-  - Sometimes after many plays the microcontroller becomes unstable
-  - The wager is not subtracted from the credit balance display 
-    because we need to receive the balance via twos compliment on the
-    I2C LED display slave.
-  - Sometimes one or two of the reels won't spin
-  - storedPayedOut isn't getting incremented
-  - value stored for storedCreditBalance is 5 more than what shows 
-   on the SS display
-  - reset doesn't seem to be resetting if you immediatly show metrics
-  x in auto mode still stepping by 5 credits in the slave
-
+  - Sometimes one or two of the reels won't spin, not really a defect.
+  - crash as soon as payed out exceeds 1,000,000.
+  
   TODO
   ====
-  - The menu on the LCD is incomplete, especially with respect to 
-    settings and displaying metrics.
   - add brown out detection
   - add watch dog protection (wdt_enable(value), wdt_reset(), WDTO_1S, WDTO_250MS)
-  - calculate the odds in the program (the payout table)
-  - make the hold configurable
-  x add the ability to turn off the sound
-  - make the reels flash when celebrating
 
   Warnings
   ========
   - Beware of turning on too much debugging, it's easy to use all 
     of the data memory, and in general this makes the microcontroller
     unstable.
-  - If you run with STATE_AUTO enabled, the chip eventually fries.
   - Gambling is a tax on people who are bad at math.  This is for
     entertainment only.  It was the intent of the author to program this game
-    to return ~15% of every wager to the house, similar to many slot machines.
+    to return ~%hold of every wager to the house, similar to many slot machines.
   - Why not control the LED that displays the credits with the LedControl 
     library?  I tried that and couldn't get more than one LedControl object to
     work at a time.  So I had to create an I2C slave instead and use another
@@ -70,7 +55,8 @@
   - Contributors: Source code has been pulled from all over the internet,
     it would be impossible for me to cite all contributors.
     Special thanks to Elliott Williams for his essential book
-    "Make: AVR Programming", which is highly recommended.
+    "Make: AVR Programming", which is highly recommended. Thanks also
+    to Cory Potter, who gave me the idea to do this.
 
   License
   =======
@@ -111,27 +97,33 @@
 #include <LiquidCrystal_I2C.h>                                                  // https://github.com/fdebrabander/Arduino-LiquidCrystal-I2C-library
 
 //- Payout Table
-/*  Based on a 1 credit wager. 
-    Different combinations of symbols: 25 * 25 * 25 = 15,625. * 8 = 13281
-    85% of every credit is returned (over time)
-                                                             Count  Act. Prob  Act Payout          Calculated      Trial &
-        Winning Combination     Payout          Probablility (438643 Plays)                                        Error
-        ===================     ======          ============ ====== =======    =========           ==========      =======*/
-#define THREE_SPACESHIP_PAYOUT   3073.8238  //  0.000064    49     0.000075   15625   14776  
-#define THREE_SYMBOL_PAYOUT       136.2481  //  0.001536    1075   0.001760     651     401
-#define TWO_SPACESHIP_PAYOUT       47.1255  //  0.004800    2991   0.004949     208     192
-#define ONE_SPACESHIP_PAYOUT        1.1035  //  0.120000    69221  0.114708       8       0
-#define TWO_SYMBOL_PAYOUT           1.0153  //  0.125000    72132  0.119402       8       8
-
-//                          Hold = 11.5%
+/*  Probabilities based on a 1 credit wager
+    Three spaceships:     1 / (25 * 25 * 25)    = 0.000064
+    Any three symbols:            24 / 15625    = 0.001536
+    Two spaceships:         (24 * 3) / 15625    = 0.004608
+    One spaceship:      (24 * 24 * 3)/ 15625    = 0.110592
+    Two symbols match: (23 * 3 * 24) / 15625    = 0.105984
+    House win, 1 minus sum of all probabilities = 0.777216
+    _
+    Use the spreadsheet to work out the payout table remembering to keep the 
+    volatility resonable i.e. < 20.
+                                                   P   R   O   O   F
+                                                   Actual    Actual    
+        Winning Combination Payout   Probablility  Count     Probability
+        =================== ======   ============  ========  ===========*/
+#define THREE_SPACESHIP_PAYOUT 600 //    0.000064            0.00006860   see the excel spreadsheet  
+#define THREE_SYMBOL_PAYOUT    122 //    0.001536            0.00151760   that accompanies this program.
+#define TWO_SPACESHIP_PAYOUT    50 //    0.004608            0.00468740
+#define ONE_SPACESHIP_PAYOUT     3 //    0.110592            0.11064389
+#define TWO_SYMBOL_PAYOUT        2 //    0.105984            0.10575249
+//
+// With these payouts the Volatility Index is 16.43
+//
 //- Macros
 #define ClearBit(x,y) x &= ~y
 #define SetBit(x,y) x |= y
-#define ClearBitNo(x,y) x &= ~_BV(y)                                            // equivalent to cbi(x,y)
+#define ClearBitNo(x,y) x &= ~_BV(y)                                            
 #define SetState(x) SetBit(machineState, x)
-//#define ShiftBit(bit) (1 << (bit))
-//#define ToggleBit(x,y) x ^= y
-//#define SetBitNo(x,y) x |= _BV(y)                                             // equivalent to sbi(x,y)
 
 //- Defines
 #define DEBUG                   1                                               // turns on (1) and off (0) output from debug* functions
@@ -196,8 +188,8 @@
 #define STATE_AUTO              B00000100                                       // This state is for automatically running the program to gather metrics.
 #define STATE_SHOW_MENU         B00001000                                       // State we're in when showing the menu.  Note you can spin and show menu 
                                                                                 // concurrently.
-#define MINIMUM_BET             5                                               // TODO: consider this something that can be changed via settings
-#define BET_INCREMENT           5                                               // TODO: consider this something that can be changed via settings
+#define MINIMUM_WAGER           5                                               // TODO: consider this something that can be changed via settings
+#define WAGER_INCREMENT         5                                               // TODO: consider this something that can be changed via settings
 
 #define ONE_SECOND              1000                                            // # milliseconds in one second. Used to control how long the siren sounds. 
 
@@ -205,8 +197,8 @@
 #define ALIEN_1_LOC             152                                             // needed for animation
 #define ALIEN_2_LOC             160
 
-#define EEPROM_FREQ             10000
-#define AUTO_MODE_MAX           1000000
+#define EEPROM_FREQ             10000                                           // Write to EEPROM every Nth play
+#define AUTO_MODE_MAX           1000000                                           // stop after this many plays in auto mode
 
 #define RED                     1                                               // TODO: should we use an enum here?  Must be a better way...
 #define GREEN                   2
@@ -254,7 +246,7 @@
 #define MENU_SIZE               17
 
 #define MAIN_MENU_NUMBER        0
-
+#define MAIN_MENU_ELEMENTS      6
 char *mainMenu[] =       {                       "Play",
                                                  "Bet",
                                                  "Settings",
@@ -272,10 +264,10 @@ char *mainMenu[] =       {                       "Play",
                                                  " ",    
                                                  " ",    
                                                  " "    };
-#define MAIN_MENU_ELEMENTS      6
 
 #define BET_MENU_NUMBER 1
-char *betMenu[] =        {                       "+5 credits: ",                // TODO: make this dynamic
+#define BET_MENU_ELEMENTS       3
+char *betMenu[] =        {                       "+5 credits: ",                // TODO: make this dynamic based on WAGER_INCREMENT
                                                  "-5 credits: ",
                                                  "Back",    
                                                  " ",    
@@ -293,10 +285,11 @@ char *betMenu[] =        {                       "+5 credits: ",                
                                                  " ",    
                                                  " "    };
 
-#define BET_MENU_ELEMENTS       3
 
 #define SETTINGS_MENU_NUMBER    2
-char *settingsMenu[] =        {                  "Auto/Manual",                 // TODO: fill out this menu
+#define SETTINGS_MENU_ELEMENTS  3
+#define SETTINGS_BACK_ITEM      2
+char *settingsMenu[] =        {                  "Auto/Manual",                 // TODO: fill out this menu with more cool options
                                                  "Toggle Sound ",
                                                  "Back ",    
                                                  " ",    
@@ -314,15 +307,13 @@ char *settingsMenu[] =        {                  "Auto/Manual",                 
                                                  " ",    
                                                  " "    };
 
-#define SETTINGS_MENU_ELEMENTS  3
-#define SETTINGS_BACK_ITEM      2
 
 #define METRICS_MENU_NUMBER     3
-
 #define METRICS_MENU_ELEMENTS   15
 char *metricsMenu[METRICS_MENU_ELEMENTS];
 
 #define HOLD_MENU_NUMBER        4
+#define HOLD_MENU_ELEMENTS      3
 char *holdMenu[] =        {                      "+1 percent: ",                
                                                  "-1 percent: ",
                                                  "Back",    
@@ -340,9 +331,6 @@ char *holdMenu[] =        {                      "+1 percent: ",
                                                  " ",    
                                                  " ",    
                                                  " "    };
-
-#define HOLD_MENU_ELEMENTS      3
-
 
 int selectPos = 0;
 int menuNumber = MAIN_MENU_NUMBER;
@@ -393,7 +381,6 @@ boolean sound = true;
 byte reelMatches = 0;                                                           // per play variables
 byte shipMatches = 0;
 
-int actualHold = 0;                                                             // storedPayedOut/storedWagered
 unsigned long wagered = 0;                                                      // amount wagered on a single spin
 double owedExcess = 0;                                                          // change, need to track this so hold is accurate
 unsigned long twoMatchCount = 0;                                                // 1 if two symbols match
@@ -401,10 +388,10 @@ unsigned int threeMatchCount = 0;                                               
 unsigned long shipOneMatchCount = 0;                                            // 1 if there's one ship present
 unsigned int shipTwoMatchCount = 0;                                             // 1 if there are two ships present
 unsigned int shipThreeMatchCount = 0;                                           // 1 if there are three ships present (Jackpot!)
-unsigned long totalCalcs = 0;                                                   //
+unsigned long totalCalcs = 0;                                                   // total plays only relavent in auto mode
 signed long startingCreditBalance;                                              // the credit balance before spinning
-int increment = BET_INCREMENT;
-#define DISP_CREDIT_INCREMENT  1
+int increment = WAGER_INCREMENT;
+#define DISP_CREDIT_INCREMENT  1                                                // on the seven segment display, increment/decrement the balance by this value until the final value is reached.
                                                                                 // lifetime variables (stored in EEprom) Reset sets most back to zero
 unsigned long storedPayedOut;                                                   // sum of all payouts
 unsigned long storedWagered;                                                    // sum of all wagers  (profit = payouts - wagers)
@@ -421,8 +408,8 @@ int storedHold = DEFAULT_HOLD;                                                  
 volatile byte portdhistory = 0b00000100;                                        // default is high because of the pull-up, correct setting
 volatile byte portchistory = 0b00001110;                                        // default is high because of the pull-up, correct setting
  
-//- Debugging Routines
-
+//- Debugging Routines                                                          // These routines are helpful for debugging, I will leave them in for your use.
+                                                                                // For sending output to the serial monitor. Set the baud rate in setup.
 void debug(String text) {
   if (DEBUG) {
     Serial.println(text);
@@ -489,7 +476,7 @@ void debugMetricDouble(const char myString[], double aDouble) {
 }
 
                                                                                 // quick and dirty ftoa for legacy code
-char *ftoa(double f)                                                             // from https://www.microchip.com/forums/m1020134.aspx
+char *ftoa(double f)                                                            // from https://www.microchip.com/forums/m1020134.aspx
 {
     static char        buf[17];
     char *            cp = buf;
@@ -543,9 +530,6 @@ void beepPurple() {                                                             
   }
 }
 
-/******************************************************************************/
-/* Interrupts                                                                 */
-/******************************************************************************/
 void InitInturrupts()                                                           // Initialize interrupts for buttons and switches
 {                                                                               
   PCICR |= (1 << PCIE_BUTTON);                                                  // Pin Change Interrupt Control Register, set PCIE2 to enable PCMSK2 scan
@@ -684,18 +668,7 @@ ISR (PCINT2_vect)
   }
 }
 
-void zeroAllBalances() {
-  reelMatches = 0;
-  shipMatches = 0;
-  wagered = MINIMUM_BET;
-  twoMatchCount = 0;
-  threeMatchCount = 0;
-  shipOneMatchCount = 0;
-  shipTwoMatchCount = 0;
-  shipThreeMatchCount = 0;
-}
-
-void spinAndEvaluate() {
+void spinAndEvaluate() {                                                        // runs when the spin button is pressed or we 'Play' from the main menu
 //debug("spinAndEvaluate()");
   spin();
   checkForWin();
@@ -713,7 +686,7 @@ void spinAndEvaluate() {
     displayCredits();                                                           // displayCredits takes care of the sign on increment
     setupMetricsMenu(); 
     debugStoredMetrics();   
-    debugMetricDouble("owedExcess",owedExcess);                                                      
+    debugMetricDouble("owedExcess",owedExcess);                                 // don't want to put owedExcess in metricsMenu because of global var space shortage                                                     
     if (totalCalcs >= AUTO_MODE_MAX) {                                          // drop out of auto mode when threshold exceeded
       ClearBit(machineState, STATE_AUTO);
       SetState(STATE_IDLE); 
@@ -738,9 +711,9 @@ void spin() {
     if (!(STATE_AUTO == (machineState & STATE_AUTO))) {
       lc.setIntensity(reelNum,LOW_INTENSITY);                                   // Set intensity levels
     }
-    stopArrayPos[reelNum] = random(0,(NUMFRAMES - 1)) * LINESPERFRAME;      
+    stopArrayPos[reelNum] = random(0,(NUMFRAMES)) * LINESPERFRAME;      
     while (stopArrayPos[reelNum] == reelArrayPos[reelNum]) {                    // keep picking a stop array position until it's not equal to the current position
-      stopArrayPos[reelNum] = random(0,(NUMFRAMES - 1)) * LINESPERFRAME;
+      stopArrayPos[reelNum] = random(0,(NUMFRAMES)) * LINESPERFRAME;
     }
   }
     while (!allReelsStopped(reelsStopped)) {
@@ -750,7 +723,7 @@ void spin() {
       }
       if(reelArrayPos[reelNum] != (stopArrayPos[reelNum]+1)) {
         if (!(STATE_AUTO == (machineState & STATE_AUTO))) {
-          for (int row = 0; row < LINESPERFRAME; row++) {
+          for (int row = 0; row < LINESPERFRAME; row++) {                       // simulate a spinning reel
             lc.setRow(reelNum,row,reel[reelArrayPos[reelNum] + row]);           // output to 8x8x3 matrix
           }
         }
@@ -767,9 +740,16 @@ void spin() {
   } 
 }
 
-void checkForWin() {                                                            // this only works if NUMREELS == 3 !. 
+void checkForWin() {                                                            // this only works if NUMREELS == 3 ! If you change NUMREELS you must do so programming! 
 //debug("checkForWin()");
-  for (int i = 0; i < NUMREELS; i++) {              
+  
+  for (int reelNum=0; reelNum < NUMREELS; reelNum++) {                          // see if ships appeared
+    if ((reelArrayPos[reelNum] - 1) == SHIP_LOC) {
+      shipMatches += 1;
+    }
+  }
+
+  for (int i = 0; i < NUMREELS; i++) {                                          // check to see if other symbols matched   
     for (int j = 0; j < NUMREELS; j++) {
       if (reelArrayPos[i]  - 1 == reelArrayPos[j] - 1) {
         reelMatches += 1;
@@ -777,22 +757,16 @@ void checkForWin() {                                                            
     }
   }
 
-  if (reelMatches == 9) {
+  if (reelMatches == 9) {                                                       // code from the block above sets reelMatches to 9 if 3 symbols match
     reelMatches = 3;
     threeMatchCount++;
-  } else if (reelMatches == 5) {
+  } else if (reelMatches == 5) {                                                // etc...
     reelMatches = 2;
     twoMatchCount++;
   } else if (reelMatches == 3) {
     reelMatches = 0;
   } else {
-    reelMatches = -1;
-  }
-
-  for (int reelNum=0; reelNum < NUMREELS; reelNum++) {                          // see if ships appeared
-    if ((reelArrayPos[reelNum] - 1) == SHIP_LOC) {
-      shipMatches += 1;
-    }
+    reelMatches = -1;                                                           // never used
   }
 
   if (shipMatches == 3) {
@@ -802,6 +776,57 @@ void checkForWin() {                                                            
   } else if (shipMatches == 1) {
       shipOneMatchCount++;
   }
+
+  if (shipThreeMatchCount) {                                    // Wins are mutually exclusive, subsequent code assumes that!
+    threeMatchCount = 0;                                        // TODO: make this a switch statement
+    shipTwoMatchCount = 0;
+    shipOneMatchCount = 0;
+    twoMatchCount = 0;
+    reelMatches = 0;
+  } else if (threeMatchCount) {
+    shipTwoMatchCount = 0;
+    shipOneMatchCount = 0;
+    twoMatchCount = 0;
+    reelMatches = 0;
+  } else if (shipTwoMatchCount) {
+    shipOneMatchCount = 0;
+    twoMatchCount = 0;
+    reelMatches = 0;
+  } else if (shipOneMatchCount) {
+    twoMatchCount = 0;
+    reelMatches = 0;
+  } else if (twoMatchCount) {
+    reelMatches = 0;
+  }
+}
+
+signed long calcWinnings() {
+  double winnings = 0;
+  //debugMetric("storedHold",storedHold);
+  if(shipThreeMatchCount > 0) {
+    winnings = wagered * (THREE_SPACESHIP_PAYOUT - (THREE_SPACESHIP_PAYOUT * (storedHold/100.0))); // winnings are the amount wagered times the payout minus the hold.
+  } else if (threeMatchCount > 0) {
+    winnings = wagered * (THREE_SYMBOL_PAYOUT - (THREE_SYMBOL_PAYOUT * (storedHold/100.0)));
+  } else if (shipTwoMatchCount > 0) {
+    winnings = wagered * (TWO_SPACESHIP_PAYOUT - (TWO_SPACESHIP_PAYOUT * (storedHold/100.0)));
+  } else if (shipOneMatchCount > 0) {
+    winnings = wagered * (ONE_SPACESHIP_PAYOUT - (ONE_SPACESHIP_PAYOUT * (storedHold/100.0)));
+  } else if (twoMatchCount > 0) {
+    winnings = wagered * (TWO_SYMBOL_PAYOUT - (TWO_SYMBOL_PAYOUT * (storedHold/100.0)));
+  } else {
+    winnings = 0;
+  }
+  signed long roundWinnings = (signed long) round(winnings);
+  owedExcess += winnings - roundWinnings;                                       // owedExcess is the change; credits between -1 and 1.
+  if (owedExcess >= 1 || owedExcess <= -1) {                                    // if we can pay out some excess
+    int roundOwedExcess = (int) round(owedExcess);
+    roundWinnings += roundOwedExcess;                                           // add the rounded portion to the winnings
+    owedExcess -= roundOwedExcess;                                              // subtract out what we added to continue to track the excess
+  } 
+  roundWinnings -= wagered;                                                     // you pay for your bet whether you won or not!  
+//  winnings -= wagered;
+  return roundWinnings;
+//  return((signed long) round(winnings));
 }
 
 void calcStored(signed long winnings) {
@@ -817,34 +842,8 @@ void calcStored(signed long winnings) {
     storedShipThreeMatchCount += shipThreeMatchCount;
 }
 
-signed long calcWinnings() {
-  double winnings = 0;
-  if(shipThreeMatchCount > 0) {
-    winnings = wagered * (THREE_SPACESHIP_PAYOUT - (THREE_SPACESHIP_PAYOUT * (storedHold/100))); // winnings are the amount wagered times the payout minus the hold.
-  } else if (threeMatchCount > 0) {
-    winnings = wagered * (THREE_SYMBOL_PAYOUT - (THREE_SYMBOL_PAYOUT * (storedHold/100)));
-  } else if (shipTwoMatchCount > 0) {
-    winnings = wagered * (TWO_SPACESHIP_PAYOUT - (TWO_SPACESHIP_PAYOUT * (storedHold/100)));
-  } else if (twoMatchCount > 0) {
-    winnings = wagered * (TWO_SYMBOL_PAYOUT - (TWO_SYMBOL_PAYOUT * (storedHold/100)));
-  } else if (shipOneMatchCount > 0) {
-    winnings = wagered * (ONE_SPACESHIP_PAYOUT - (ONE_SPACESHIP_PAYOUT * (storedHold/100)));
-  } else {
-    winnings = 0;
-  }
-  signed long roundWinnings = (signed long) round(winnings);
-  owedExcess += winnings - roundWinnings;                                       // owedExcess is the change; credits between -1 and 1.
-  if (owedExcess >= 1 || owedExcess <= -1) {                                    // if we can pay out some excess
-    int roundOwedExcess = (int) round(owedExcess);
-    roundWinnings += roundOwedExcess;                                           // add the rounded portion to the winnings
-    owedExcess -= roundOwedExcess;                                              // subtract out what we added to continue to track the excess
-  } 
-  roundWinnings -= wagered;                                                     // you pay for you bet whether you won or not!  
-  return roundWinnings;
-}
-
 void storeMetrics() {
-    beepAuto();
+    beepAuto();                                                                 // so we know we're not hung in auto mode.
     updateStoredPayedOut();
     updateStoredWagered();
     updateStoredPlays();                
@@ -889,7 +888,7 @@ void displayCredits() {
   byte error = Wire.endTransmission();
   if (error==4)
   {
-    debug(F("Unknown error at address"));
+    debug(F("Unknown error at address"));                                       // I've never seen this happen.
   }    
 
 }
@@ -907,7 +906,7 @@ bool allReelsStopped(byte reelsStopped[]) {
   return 0;
 }
 
-void celebrateWin(byte matches) {
+void celebrateWin(byte matches) {                                               // we can probably do better than this.  I've never seen it run for a three ship match...
 //debug("celebrateWin()");
   for (int i = 0; i < (matches - 1); i++) {
     playSiren();
@@ -988,7 +987,7 @@ void setColor(int redValue, int greenValue, int blueValue) {
   analogWrite(BLUE_PIN, blueValue);
 }
 
-void showColor(int color) {
+void showColor(int color) {                                                     // There's got to be a better way to do this...
   switch(color) {
      case RED  :
         setRed();
@@ -1044,6 +1043,17 @@ void playAnimation() {                                                          
   }
 }
 
+void zeroAllBalances() {                                                        // set all balances back to zero.
+  reelMatches = 0;
+  shipMatches = 0;
+  wagered = MINIMUM_WAGER;
+  twoMatchCount = 0;
+  threeMatchCount = 0;
+  shipOneMatchCount = 0;
+  shipTwoMatchCount = 0;
+  shipThreeMatchCount = 0;
+}
+
 unsigned long getStoredPayedOut(){
     return (long) eeprom_read_dword(PAYEDOUT_ADDR) ;
 }
@@ -1092,7 +1102,7 @@ int getStoredHold() {
   return (int) eeprom_read_dword(HOLD_ADDR);
 }
 
-void updateStoredPayedOut() {
+void updateStoredPayedOut() {                                                   // all of these update functions are only called from one place and they are unnecessary.
     eeprom_write_dword (PAYEDOUT_ADDR, (uint32_t) storedPayedOut);
 }
 
@@ -1424,7 +1434,7 @@ void setup()
 
   memcpy(currentMenu, mainMenu, arraySize);
   elements = MAIN_MENU_ELEMENTS;
-  randomSeed(analogRead(ADC_READ_PIN));                                 // do not ground this pin; use this or randomSeed(millis());
+  randomSeed(analogRead(ADC_READ_PIN));                                          // do not ground this pin; use this or randomSeed(millis());
 }
 
 void setupMetricsMenu() {
