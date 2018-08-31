@@ -677,9 +677,7 @@ void spinAndEvaluate() {                                                        
   if (!(STATE_AUTO == (machineState & STATE_AUTO))) {                           // if we're not in auto mode display the credits
     storeMetrics();
     displayCredits();
-    if (reelMatches > 0) {
-      celebrateWin(reelMatches);
-    }
+    celebrateWin();
     setupMetricsMenu(); 
   } else if ((totalCalcs++%EEPROM_FREQ) == 0) {                                 //  EEPROM can be written ~100,000 times,
     storeMetrics();
@@ -802,7 +800,6 @@ void checkForWin() {                                                            
 
 signed long calcWinnings() {
   double winnings = 0;
-  //debugMetric("storedHold",storedHold);
   if(shipThreeMatchCount > 0) {
     winnings = wagered * (THREE_SPACESHIP_PAYOUT - (THREE_SPACESHIP_PAYOUT * (storedHold/100.0))); // winnings are the amount wagered times the payout minus the hold.
   } else if (threeMatchCount > 0) {
@@ -824,9 +821,7 @@ signed long calcWinnings() {
     owedExcess -= roundOwedExcess;                                              // subtract out what we added to continue to track the excess
   } 
   roundWinnings -= wagered;                                                     // you pay for your bet whether you won or not!  
-//  winnings -= wagered;
   return roundWinnings;
-//  return((signed long) round(winnings));
 }
 
 void calcStored(signed long winnings) {
@@ -906,9 +901,28 @@ bool allReelsStopped(byte reelsStopped[]) {
   return 0;
 }
 
-void celebrateWin(byte matches) {                                               // we can probably do better than this.  I've never seen it run for a three ship match...
+void celebrateWin() {                                               
 //debug("celebrateWin()");
-  for (int i = 0; i < (matches - 1); i++) {
+  if (shipThreeMatchCount) {                                                    
+    playSiren();
+    playSiren();
+    playSiren();
+    playSiren();
+    playSiren();
+    delay(ONE_SECOND);
+  } else if (threeMatchCount) {
+    playSiren();
+    playSiren();
+    playSiren();
+    delay(ONE_SECOND);
+  } else if (shipTwoMatchCount) {
+    delay(ONE_SECOND);
+    delay(ONE_SECOND);
+    delay(ONE_SECOND);
+  } else if (shipOneMatchCount) {
+    playSiren();
+    delay(ONE_SECOND);
+  } else if (twoMatchCount) {
     playSiren();
     delay(ONE_SECOND);
   }
