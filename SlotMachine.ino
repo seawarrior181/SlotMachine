@@ -24,7 +24,7 @@
   =============  
   - Sometimes one or two of the reels won't spin, not really a defect.
   - crash as soon as payed out exceeds 1,000,000.
-  
+
   TODO
   ====
   - add brown out detection
@@ -914,12 +914,14 @@ void celebrateWin() {
     playSiren();
     playSiren();
     playSiren();
+    playSiren();
     delay(ONE_SECOND);
   } else if (shipTwoMatchCount) {
-    delay(ONE_SECOND);
-    delay(ONE_SECOND);
-    delay(ONE_SECOND);
+    playSiren();
+    playSiren();
+    playSiren();
   } else if (shipOneMatchCount) {
+    playSiren();
     playSiren();
     delay(ONE_SECOND);
   } else if (twoMatchCount) {
